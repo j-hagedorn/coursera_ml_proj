@@ -1,0 +1,342 @@
+---
+title: "Learning Machine Learning Notebook"
+output: html_document
+---
+
+```{r}
+options(width = 100)
+knitr::opts_chunk$set(message = F, error = F, warning = F, comment = NA, fig.align = 'center', dpi = 100, tidy = F, cache.path = '.cache/', fig.path = 'fig/')
+```
+
+
+Notes and swervings from Coursera [Machine Learning Class](https://github.com/bcaffo/courses/tree/master/08_PracticalMachineLearning)
+
+
+## ROC curves
+
+[Here's a pic](https://en.wikipedia.org/wiki/Receiver_operating_characteristic#/media/File:ROC_space-2.png)
+
+*ROC* : (receiver operating characteristic)
+
+* y- axis : True Positive rate
+* x- axis : False positive rate
+
+*AUC* : "area-under-the-curve", used to quantify how good a prediction algorithm is.
+
+* 0.5 = monkeys with typewriters
+* 1.0 = perfect classifier
+* 0.8 = pretty good
+
+--------------------------------------------------
+
+## Cross Validation
+
+### Steps:
+1.  Split training set from test set
+2.  Split training set itself into training & test sets
+3.  Build a model on the training set
+4.  Evaluate model on test set
+5.  Repeat and average the estimated errors
+6.  Apply the best model to the original test set
+
+### How to split up the dataset to use it...
+
+#### Random subsampling
+
+* Randomize selection of records from df to divvy into TEST and TRAIN subsets
+* [Use the whole dataset multiple times...](https://github.com/bcaffo/courses/blob/master/assets/img/08_PredictionAndMachineLearning/random.png)
+
+#### K-fold
+
+* Break `df` into k different groups
+* Apply using all combos of groups, [each gets a turn as the TEST subset](https://github.com/bcaffo/courses/blob/master/assets/img/08_PredictionAndMachineLearning/kfold.png)
+
+#### Leave one out
+
+* Leave one sample out as TEST
+* Loop through all samples
+
+------------------------------------------------
+
+## Getting the right data
+
+Simple idea: Like predicts like
+To predict `x`, use data about `x`
+
+Most common mistake is using data unrelated to the question being asked.  Cf. [spurious correlations](http://www.tylervigen.com/spurious-correlations)
+
+------------------------------------------------
+
+## `caret` package intro
+
+[Notes here](https://github.com/bcaffo/courses/blob/master/08_PracticalMachineLearning/010caretPackage/index.md)
+
+`caret` is unified framewwork for multiple packages
+
+```{r}
+library(caret); library(kernlab); data(spam)
+```
+
+### Data splitting
+Using `createDataPartition`,`createResample`,`createTimeSlices`
+
+**Basic split into test/train**
+```{r}
+inTrain <- createDataPartition(y = spam$type,
+                               p = 0.75, list = F)
+
+training <- spam[inTrain,]
+testing <- spam[-inTrain,]
+dim(training)
+```
+
+**K-folds method**
+```{r}
+set.seed(32323)
+folds <- createFolds(y = spam$type,
+                     k = 10,
+                     list = T,
+                     returnTrain = T)
+```
+Setting arg `returnTrain = F` would return Test set instead of training set.
+
+We can see how many records fall into each fold, `r sapply(folds, length)`
+
+...and check out which records are in a given fold, e.g. fold 1 displayed with:
+```{r}
+folds[[1]][1:10]
+```
+
+### Training/testing functions
+Using `train`, `predict`
+
+**Resampling method**
+```{r}
+set.seed(32323)
+folds <- createResample(y = spam$type,
+                        times = 10,
+                        list = T)
+```
+Again, we can see how many records fall into each fold, `sapply(folds, length)`
+
+...and check out which records are in a fold, e.g. `folds[[1]][1:10]`
+
+------------------------------------------------------
+
+## Preprocessing (cleaning)
+
+Uses `preProcess` fx in caret:
+
+After plotting to look for weirdness, may need to transform variables, especially if using linear approaches (e.g. regression)
+
+For example, using the `spam` data:
+```{r}
+hist(training$capitalAve,main="",xlab="ave. capital run length")
+
+mean(training$capitalAve)
+
+sd(training$capitalAve)
+```
+...we can see that this variable is very skewed, so it's hard to deal with in model-based predictors, so pre-processing could be helpful.
+
+### Standardizing
+
+Here we standardize the variable in the test set...
+```{r}
+trainCapAve <- training$capitalAve
+trainCapAveS <- (trainCapAve  - mean(trainCapAve))/sd(trainCapAve) 
+mean(trainCapAveS)
+sd(trainCapAveS)
+```
+This makes the mean = 0 and the sd = 1
+
+...and we need to apply the same standardization to the test set, we have to use the mean and sd from the training set to standardize the testing set values, so mean will not = 0 and sd will not = 1
+
+You can accomplish all of this using `caret` using the `preProcess` function, like so:
+```{r}
+preObj <- preProcess(training[,-58],method=c("center","scale"))
+trainCapAveS <- predict(preObj,training[,-58])$capitalAve
+mean(trainCapAveS)
+sd(trainCapAveS)
+```
+
+And then use the `preObj` created above with the training set and apply it to the test set:
+```{r}
+testCapAveS <- predict(preObj,testing[,-58])$capitalAve
+mean(testCapAveS)
+sd(testCapAveS)
+```
+
+Or, even more easily, pass the preprocess commands directly to the `train` arg:
+```{r}
+set.seed(32343)
+modelFit <- train(type ~ ., data = training,
+                  preProcess = c("center","scale"), method = "glm")
+modelFit
+```
+
+So now let's look at what our transformations have done to the data, using *Box-Cox Transforms*:
+```{r}
+preObj <- preProcess(training[,-58],method=c("BoxCox"))
+trainCapAveS <- predict(preObj,training[,-58])$capitalAve
+hist(trainCapAveS) 
+qqnorm(trainCapAveS)
+```
+
+If there are a bunch of values repeated (e.g. at zero), the `BoxCox` method won't take care of all of them.  So it's possible the qqplot won't show a 45 degree angle.
+------------------------------------------------------
+
+### Fit a model
+```{r}
+set.seed(32343)
+modelFit <- train(type ~ .,
+                  data = training,
+                  method = "glm")
+modelFit
+```
+
+
+**Set model options**
+You can also set multiple options and pass them to the `train` function:
+```{r}
+args(train.default)
+```
+ Options to pass to `metric` argument are:
+ 
+ * _Continuous outcomes_ : `RMSE` = Root mean squared error, `RSquared` = R2 from regression models
+ * _Categorical outcomes_ `Accuracy` = Fraction correct, `Kappa` = measure of concordance
+
+`p` argument sets size of training set
+
+`trControl` arg uses `trainControl()` function to specify resampling.  
+```{r}
+args(trainControl)
+```
+
+**Examine the model**
+```{r}
+modelFit$finalModel
+```
+
+**Apply model to new sample for prediction**
+```{r}
+predictions <- predict(modelFit, newdata = testing)
+
+predictions
+```
+
+#### Model comparison
+
+Using `confusionMatrix`
+
+Compare predicted classifications (i.e. `predictions`) with actual classifications (i.e. `testing$type`)
+```{r}
+confusionMatrix(predictions, testing$type)
+```
+
+-----------------------------------------------------
+
+## Plotting predictors
+
+Explore the relationship between variables visually to start to understand meaningful relationships.  Things to look for are:
+
+* Imbalance in outcomes/predictors
+* Outliers (suggestive of variables not being included in subset considered)
+* Groups of points not explained by a predictor
+* Skewed variables (if using linear models)
+
+Load the `wage` dataset for examples:
+```{r}
+library(ISLR); library(ggplot2); library(caret); library(gridExtra);
+data(Wage)
+summary(Wage)
+```
+
+Build a training and test set:
+```{r}
+inTrain <- createDataPartition(y = Wage$wage,
+                               p = 0.7, 
+                               list = FALSE)
+training <- Wage[inTrain,]
+testing <- Wage[-inTrain,]
+dim(training); dim(testing)
+```
+
+Create a feature plot
+```{r}
+featurePlot(x = training[,c("age","education","jobclass")],
+            y = training$wage,
+            plot="pairs")
+```
+
+Check out the feature plot to find potentially interesting relationships between variables.  Then, plot those separately:
+```{r}
+qplot(age,wage,data=training)
+```
+
+What's that blob up on top?  Investigate by introducing color to represent other variables:
+```{r}
+qplot(age,wage,colour=jobclass,data=training)
+```
+
+You can add regression smoothers to fit regression lines to specific factor variables.  SO for every level of the factor, it creates a regression line.
+```{r}
+qq <- qplot(age,wage,colour=education,data=training)
+qq +  geom_smooth(method='lm',formula=y~x)
+```
+
+You can also cut numeric variables into ranges and create groups using those ranges.  Here the `g` (for "groups") arg specifies the number of groups:
+```{r}
+cutWage <- Hmisc::cut2(training$wage,g=3)
+table(cutWage)
+```
+
+And then visualize differences by those defined groups:
+```{r}
+p1 <- qplot(cutWage,age, data=training,fill=cutWage,
+      geom=c("boxplot"))
+p1
+```
+and, with points overlayed:
+```{r}
+p2 <- qplot(cutWage,age, data = training, fill = cutWage,
+      geom = c("boxplot","jitter"))
+grid.arrange(p1,p2,ncol = 2)
+```
+
+Looking at points overlayed is a way of seeing how representative the boxplot is.  I.e. if there aren't many points, the range is likely not meaningful.
+
+**Density plots**
+```{r}
+qplot(wage, colour = education, data=training, geom = "density")
+```
+
+---------------------------------------------------
+
+## Preprocessing
+
+---------------------------------------------------
+
+## Decision Tree
+
+### Measures of impurity
+
+Misclassification Error:
+* 0 = perfect purity
+* 0.5 = no purity
+
+Gini Index:
+* 0 = perfect purity
+* 0.5 = no purity
+
+Deviance/Information gain:
+* 0 = perfect purity
+* 1 = no purity
+
+```{r}
+library(ggplot2)
+data(iris)
+inTrain <- createDataPartition(y = iris$Species,
+                               p = 0.7, list = F)
+```
+
